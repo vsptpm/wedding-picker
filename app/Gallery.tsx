@@ -42,7 +42,12 @@ type Route =
 
 function parseHash(): Route {
   const [path, qs] = (typeof window === "undefined" ? "" : window.location.hash.slice(1)).split("?");
-  const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  let parts: string[];
+  try {
+    parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return { view: "home" }; // truncated or mangled link
+  }
   const q = new URLSearchParams(qs);
   const tab = (TABS.some((t) => t.key === q.get("tab")) ? q.get("tab") : "all") as Tab;
   const who = q.get("who") ? Number(q.get("who")) : null;
@@ -189,14 +194,22 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
       .catch(() => setError("We couldn't load the gallery. Check your connection and refresh."));
   }, []);
 
-  // Pull everyone else's picks every 20s so the family view stays fresh.
+  // Pull everyone else's picks every 20s so the family view stays fresh (paused while the tab is hidden).
+  // `version` bumps on every local change; a refresh that started before a change is discarded, so it can't briefly
+  // undo something you just did.
   useEffect(() => {
     if (!me) return;
     const t = setInterval(async () => {
-      if (pending.current > 0) return;
+      if (pending.current > 0 || document.hidden) return;
+      const startedAt = version.current;
       try {
-        const d = await (await fetch("/api/photos?marksOnly=1")).json();
-        if (pending.current > 0) return;
+        const r = await fetch("/api/photos?marksOnly=1");
+        if (r.status === 401) return signedOut();
+        const d = await r.json();
+        if (pending.current > 0 || version.current !== startedAt) return;
+        const sig = JSON.stringify([d.marks, d.rotations, d.users]);
+        if (sig === lastSync.current) return; // nothing changed: don't redraw thousands of tiles
+        lastSync.current = sig;
         setUsers(d.users);
         setMarks(buildMarks(d.marks));
         setRotations(new Map(d.rotations));
@@ -206,6 +219,12 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
   }, [me]);
 
   const pending = useRef(0);
+  const version = useRef(0);
+  const lastSync = useRef("");
+  /** The session ended (signed out elsewhere, or the access code changed): go to sign-in instead of failing silently. */
+  const signedOut = useCallback(() => {
+    window.location.href = "/login";
+  }, []);
   const marksRef = useRef(marks);
   marksRef.current = marks;
   const rotationsRef = useRef(rotations);
@@ -214,6 +233,7 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
   const save = useCallback(
     async (pids: string[], patch: Partial<Mark>) => {
       if (!me) return;
+      version.current++;
       const before = new Map(pids.map((pid) => [pid, marksRef.current.get(pid)]));
       const apply = (m: Marks, compute: (pid: string, cur: Map<number, Mark> | undefined) => Map<number, Mark> | undefined) => {
         const next: Marks = new Map(m);
@@ -240,6 +260,7 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ photoIds: pids, ...patch }),
         });
+        if (r.status === 401) return signedOut();
         if (!r.ok) throw new Error();
       } catch {
         setMarks((m) => apply(m, (pid) => before.get(pid)));
@@ -254,6 +275,7 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
   // Rotation is shared: fixing a sideways photo fixes it for everyone.
   const rotate = useCallback(
     async (pid: string, delta: number) => {
+      version.current++;
       const old = rotationsRef.current.get(pid) || 0;
       const deg = (((old + delta) % 360) + 360) % 360;
       const setDeg = (d: number) => {
@@ -270,6 +292,7 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ photoIds: [pid], deg }),
         });
+        if (r.status === 401) return signedOut();
         if (!r.ok) throw new Error();
       } catch {
         setDeg(old);
@@ -794,18 +817,21 @@ function AlbumView({
   useEffect(() => persist("wp.density", density), [density]);
 
   const nextAlbum = album === ALL ? null : albums[albums.indexOf(album) + 1];
-  const idx = route.view === "photo" ? list.findIndex((p) => p.file === route.file) : -1;
+  const findPhoto = (key: string) => {
+    const byId = list.findIndex((p) => p.id === key);
+    return byId >= 0 ? byId : list.findIndex((p) => p.file === key); // older links used the bare file name
+  };
+  const idx = route.view === "photo" ? findPhoto(route.file) : -1;
 
   // When returning from the viewer, scroll the last-viewed photo into view.
   const lastFile = useRef<string | null>(null);
   useEffect(() => {
     if (route.view === "photo") lastFile.current = route.file;
     else if (lastFile.current) {
-      const i = list.findIndex((p) => p.file === lastFile.current);
+      const i = findPhoto(lastFile.current);
       if (i >= limit) setLimit(i + 60);
-      requestAnimationFrame(() =>
-        document.getElementById(`t-${lastFile.current}`)?.scrollIntoView({ block: "center" }),
-      );
+      const id = list[i]?.id;
+      if (id) requestAnimationFrame(() => document.getElementById(`t-${id}`)?.scrollIntoView({ block: "center" }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.view]);
@@ -815,7 +841,7 @@ function AlbumView({
   const openedFromGrid = useRef(false);
   const open = (p: Photo) => {
     openedFromGrid.current = true;
-    go({ view: "photo", album, tab, who, file: p.file });
+    go({ view: "photo", album, tab, who, file: p.id });
   };
   const close = () => {
     if (openedFromGrid.current) {
@@ -957,7 +983,7 @@ function AlbumView({
             return (
               <div
                 key={p.id}
-                id={`t-${p.file}`}
+                id={`t-${p.id}`}
                 className={`tile ${selected ? "is-selected" : ""} ${mine === "maybe" ? "is-maybe" : ""} ${isSideways(deg) ? "is-portrait" : ""}`}
                 // Justified rows: each tile grows in proportion to its shape, so every photo shows uncropped and
                 // rows fill the width. Previews are all 3:2, turned 2:3 when rotated a quarter turn.
@@ -1037,7 +1063,7 @@ function AlbumView({
           users={users}
           save={save}
           rotate={rotate}
-          onIndex={(i) => go({ view: "photo", album, tab, who, file: list[i].file }, true)}
+          onIndex={(i) => go({ view: "photo", album, tab, who, file: list[i].id }, true)}
           onClose={close}
         />
       )}
@@ -1100,6 +1126,12 @@ function Viewer({
   
   useEffect(() => persist("wp.autoNext", autoNext), [autoNext]);
 
+  // Take keyboard focus when opening, so keys act on the viewer rather than the grid tile behind it.
+  const viewerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    viewerRef.current?.focus({ preventScroll: true });
+  }, []);
+
   // Lock page scroll behind the viewer.
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -1131,12 +1163,17 @@ function Viewer({
   const next = useCallback(() => step(1), [step]);
   const marksRef = useRef(marks);
   marksRef.current = marks;
+  const advanceTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(advanceTimer.current), []);
   const toggle = useCallback(
     (s: Status) => {
       const id = list[cur.current].id;
       const turningOn = marksRef.current.get(id)?.get(me.id)?.status !== s;
       save([id], { status: turningOn ? s : null });
-      if (turningOn && autoNext) setTimeout(next, 220);
+      if (turningOn && autoNext) {
+        clearTimeout(advanceTimer.current);
+        advanceTimer.current = setTimeout(next, 220);
+      }
     },
     [list, me.id, save, autoNext, next],
   );
@@ -1148,6 +1185,9 @@ function Viewer({
       // Ignore keys only while typing; a focused toggle or button must not swallow shortcuts.
       const el = e.target as HTMLElement;
       if (el.closest("textarea,select") || (el instanceof HTMLInputElement && !["checkbox", "radio", "button"].includes(el.type))) return;
+      // Enter on a focused button/link just presses it. Space always means "select" here (its default — pressing the
+      // focused button — is prevented below), so it never does two things at once.
+      if (e.key === "Enter" && el.closest("button,a,[role=menuitem]")) return;
       const k = keyState.current;
       if (k.noteOpen) return;
       const id = list[cur.current].id;
@@ -1175,7 +1215,7 @@ function Viewer({
   const slideRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="viewer" role="dialog" aria-modal="true" aria-label={`Photo ${p.file}`}>
+    <div className="viewer" role="dialog" aria-modal="true" aria-label={`Photo ${p.file}`} tabIndex={-1} ref={viewerRef}>
       <div className="v-top">
         <button className="v-icon" onClick={onClose} aria-label="Close">
           <Icon name="x" size={22} />

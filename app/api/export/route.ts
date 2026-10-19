@@ -28,7 +28,7 @@ export async function GET(req: Request) {
          group_concat(CASE WHEN m.note IS NOT NULL THEN u.name || ': ' || m.note END, ' | ') AS notes,
          SUM(m.status='select') AS nsel, SUM(m.status='maybe') AS nmay
        FROM photos p JOIN marks m ON m.photo_id = p.id JOIN users u ON u.id = m.user_id
-       ${folders.length ? `WHERE m.album IN (${folders.map(() => "?").join(",")})` : ""}
+       WHERE p.present = 1 ${folders.length ? `AND m.album IN (${folders.map(() => "?").join(",")})` : ""}
        GROUP BY p.id ORDER BY m.album, p.file`,
     )
     .all(...folders) as Row[];
@@ -46,7 +46,12 @@ export async function GET(req: Request) {
     for (const r of final) byAlbum.set(r.album, [...(byAlbum.get(r.album) || []), r.file]);
     body = [...byAlbum].map(([a, fs]) => `== ${a} (${fs.length}) ==\n${fs.join("\n")}`).join("\n\n") + "\n";
   } else {
-    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    // Quote every cell, and neutralise values Excel/Sheets would run as formulas (a note starting with "=", "+", …).
+    const esc = (v: unknown) => {
+      let t = String(v ?? "");
+      if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
+      return `"${t.replace(/"/g, '""')}"`;
+    };
     body =
       ["folder,file,selected_by,maybe_by,notes,original"]
         .concat(

@@ -58,6 +58,14 @@ function open() {
   }
   db.exec(`CREATE INDEX IF NOT EXISTS marks_album ON marks(album, status)`);
   db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+  // Each session remembers which code created it, so changing a code signs those people out.
+  const sessionCols = db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
+  if (!sessionCols.some((c) => c.name === "code_hash")) db.exec(`ALTER TABLE sessions ADD COLUMN code_hash TEXT`);
+  // Rights come from the code typed at sign-in, stored on the session — never from the person's name.
+  if (!sessionCols.some((c) => c.name === "role")) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN role TEXT`);
+    db.exec(`DELETE FROM sessions`); // older sessions can't prove which code they used: everyone signs in once more
+  }
   // Guests (signed in with GUEST_CODE) only see the shared selection and can't change anything.
   const userCols = db.prepare(`PRAGMA table_info(users)`).all() as { name: string }[];
   if (!userCols.some((c) => c.name === "is_guest")) db.exec(`ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0`);

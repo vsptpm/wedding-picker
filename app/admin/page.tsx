@@ -10,6 +10,19 @@ import { setSharedMinVotes, sharedCount, sharedMinVotes } from "@/lib/shared";
 
 export const dynamic = "force-dynamic";
 
+async function removePerson(formData: FormData) {
+  "use server";
+  const me = await currentUser();
+  const id = Number(formData.get("id"));
+  if (!me?.is_admin || !id || id === me.id) return;
+  const d = db();
+  d.pragma("foreign_keys = ON");
+  const name = (d.prepare(`SELECT name FROM users WHERE id = ?`).get(id) as { name: string } | undefined)?.name;
+  d.prepare(`DELETE FROM users WHERE id = ?`).run(id); // picks, notes and sessions go with them (ON DELETE CASCADE)
+  revalidatePath("/admin");
+  redirect(`/admin?removed=${encodeURIComponent(name ?? "")}#people`);
+}
+
 async function setShared(formData: FormData) {
   "use server";
   if (!(await currentUser())?.is_admin) return;
@@ -53,7 +66,7 @@ async function syncOriginals() {
   let q: string;
   try {
     const r = await syncDrive();
-    q = `synced=${r.matched}&missing=${r.missing}&rotated=${r.rotated}`;
+    q = `synced=${r.matched}&missing=${r.missing}&orienting=${r.orienting}`;
   } catch (e) {
     q = `syncError=${encodeURIComponent(e instanceof Error ? e.message : "Sync failed")}`;
   }
@@ -64,7 +77,14 @@ async function syncOriginals() {
 export default async function Admin({
   searchParams,
 }: {
-  searchParams: Promise<{ synced?: string; missing?: string; rotated?: string; syncError?: string; shared?: string }>;
+  searchParams: Promise<{
+    synced?: string;
+    missing?: string;
+    orienting?: string;
+    syncError?: string;
+    shared?: string;
+    removed?: string;
+  }>;
 }) {
   const sp = await searchParams;
   const user = await currentUser();
@@ -199,10 +219,11 @@ export default async function Admin({
         </form>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="people">
         <div className="panel-head">
           <h2>People</h2>
           <p>Everyone who has signed in, and how far they&apos;ve got.</p>
+          {sp.removed != null && <p className="hint">Removed {sp.removed || "that person"}.</p>}
         </div>
         <div className="table-wrap">
           <table>
@@ -214,6 +235,7 @@ export default async function Admin({
                 <th>Reviewed</th>
                 <th className="num">Notes</th>
                 <th>Last active</th>
+                <th aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -245,6 +267,21 @@ export default async function Admin({
                     </td>
                     <td className="num">{fmt(p.notes)}</td>
                     <td className="muted">{ago(p.last)}</td>
+                    <td className="row-actions">
+                      {p.id !== user.id && (
+                        <details className="confirm">
+                          <summary>Remove</summary>
+                          <form action={removePerson} className="confirm-pop">
+                            <input type="hidden" name="id" value={p.id} />
+                            <p>
+                              Remove <strong>{p.name}</strong> and their {fmt(p.sel)} selections
+                              {p.notes ? ` and ${fmt(p.notes)} notes` : ""}? This can&apos;t be undone.
+                            </p>
+                            <button className="btn btn-danger">Remove</button>
+                          </form>
+                        </details>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -353,7 +390,8 @@ export default async function Admin({
             <span className="hint">
               Linked {fmt(Number(sp.synced))} photos
               {Number(sp.missing) > 0 ? ` · ${fmt(Number(sp.missing))} have no matching original on Drive` : " · all matched"}
-              {Number(sp.rotated) > 0 && ` · ${fmt(Number(sp.rotated))} sideways photos turned upright`}
+              {Number(sp.orienting) > 0 &&
+                ` · checking orientation of ${fmt(Number(sp.orienting))} new photos in the background`}
             </span>
           )}
           {sp.syncError && <span className="hint error-text">{sp.syncError}</span>}

@@ -7,8 +7,10 @@ export async function POST(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (user.is_guest) return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  const { photoIds, deg } = (await req.json()) as { photoIds?: string[]; deg?: number };
-  const ids = Array.isArray(photoIds) ? photoIds.slice(0, 5000) : [];
+  const body = (await req.json().catch(() => null)) as { photoIds?: string[]; deg?: number } | null;
+  if (!body || typeof body !== "object") return NextResponse.json({ error: "bad request" }, { status: 400 });
+  const { photoIds, deg } = body;
+  const ids = Array.isArray(photoIds) ? photoIds.slice(0, 5000).filter((x): x is string => typeof x === "string") : [];
   if (!ids.length || ![0, 90, 180, 270].includes(deg as number))
     return NextResponse.json({ error: "bad request" }, { status: 400 });
   const d = db();

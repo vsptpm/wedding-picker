@@ -6,8 +6,9 @@ export async function POST(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (user.is_guest) return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  const body = (await req.json()) as { photoIds?: string[]; status?: Status | null; note?: string | null };
-  const ids = Array.isArray(body.photoIds) ? body.photoIds.slice(0, 5000) : [];
+  const body = (await req.json().catch(() => null)) as { photoIds?: string[]; status?: Status | null; note?: string | null } | null;
+  if (!body || typeof body !== "object") return NextResponse.json({ error: "bad request" }, { status: 400 });
+  const ids = Array.isArray(body.photoIds) ? body.photoIds.slice(0, 5000).filter((x): x is string => typeof x === "string") : [];
   if (!ids.length) return NextResponse.json({ error: "photoIds required" }, { status: 400 });
   if (body.status != null && !STATUSES.includes(body.status))
     return NextResponse.json({ error: "bad status" }, { status: 400 });

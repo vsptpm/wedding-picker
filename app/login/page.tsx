@@ -1,4 +1,5 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { clearLoginFailures, loginBlockedFor, recordLoginFailure } from "@/lib/ratelimit";
 import { redirect } from "next/navigation";
 import { SESSION_COOKIE, signIn } from "@/lib/auth";
 import { siteSubtitle, siteTitle } from "@/lib/site";
@@ -10,8 +11,17 @@ async function login(formData: FormData) {
   // People sometimes type the access code into the name box — catch that instead of creating a user called "wedding2026".
   const codes = [process.env.ACCESS_CODE, process.env.ADMIN_CODE].filter(Boolean).map((c) => c!.toLowerCase());
   if (codes.includes(name.toLowerCase())) redirect(`/login?error=name`);
+  const h = await headers();
+  // X-Real-IP is set by nginx from the actual connection (clients can't spoof it, unlike the first X-Forwarded-For hop).
+  const client = (h.get("x-real-ip") || h.get("x-forwarded-for")?.split(",").pop() || "local").trim();
+  const wait = loginBlockedFor(client);
+  if (wait) redirect(`/login?error=locked&wait=${wait}`);
   const result = signIn(name, code);
-  if ("error" in result) redirect(`/login?error=${result.error === "name" ? "needname" : "code"}&name=${encodeURIComponent(name)}`);
+  if ("error" in result) {
+    if (result.error === "code") recordLoginFailure(client);
+    redirect(`/login?error=${result.error === "name" ? "needname" : "code"}&name=${encodeURIComponent(name)}`);
+  }
+  clearLoginFailures(client);
   (await cookies()).set(SESSION_COOKIE, result.token, {
     httpOnly: true,
     sameSite: "lax",
@@ -28,8 +38,12 @@ const ERRORS: Record<string, string> = {
   needname: "Please enter your name so the family knows who picked which photo.",
 };
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; name?: string }> }) {
-  const { error, name } = await searchParams;
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; name?: string; wait?: string }>;
+}) {
+  const { error, name, wait } = await searchParams;
   const title = siteTitle();
   const subtitle = siteSubtitle();
   return (
@@ -59,10 +73,17 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <span>Access code</span>
           <input name="code" type="password" required autoComplete="current-password" autoFocus={!!name} />
         </label>
-        {error && ERRORS[error] && (
+        {error === "locked" ? (
           <p className="form-error" role="alert">
-            {ERRORS[error]}
+            Too many wrong codes. Please wait {Math.max(1, Number(wait) || 15)} minutes and try again.
           </p>
+        ) : (
+          error &&
+          ERRORS[error] && (
+            <p className="form-error" role="alert">
+              {ERRORS[error]}
+            </p>
+          )
         )}
         <button type="submit" className="btn btn-primary">
           Continue

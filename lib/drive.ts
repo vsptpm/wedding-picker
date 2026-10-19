@@ -42,10 +42,19 @@ export async function syncDrive() {
   const { missing } = d
     .prepare(`SELECT COUNT(*) missing FROM photos WHERE present = 1 AND drive_id IS NULL`)
     .get() as { missing: number };
-  // Read the camera's orientation for newly linked photos so sideways shots show upright (manual rotations win).
-  const orient = await autoOrient(d);
-  return { folders: albums.length, driveFiles: seen, matched, missing, rotated: orient.rotated };
+  // Reading orientation for many new photos can take minutes, longer than a web request may wait, so it runs in the
+  // background; sideways photos turn upright as it goes (manual rotations always win).
+  const pending = (d.prepare(`SELECT COUNT(*) n FROM photos WHERE present = 1 AND drive_id IS NOT NULL AND exif_orient IS NULL`).get() as { n: number }).n;
+  if (pending && !orienting) {
+    orienting = true;
+    autoOrient(d)
+      .catch((e) => console.error("auto-orient failed", e))
+      .finally(() => (orienting = false));
+  }
+  return { folders: albums.length, driveFiles: seen, matched, missing, orienting: pending };
 }
+
+let orienting = false;
 
 export const driveDownloadUrl = (id: string) =>
   `https://drive.usercontent.google.com/download?id=${encodeURIComponent(id)}&export=download`;

@@ -466,6 +466,7 @@ kbd {
   -webkit-user-select: none; user-select: none;
 }
 @keyframes fade { from { opacity: 0; } }
+.viewer:focus { outline: none; }
 .v-top {
   display: flex; align-items: center; gap: 12px; padding: 10px 14px; min-height: 60px;
 }
@@ -690,6 +691,19 @@ a.v-select { text-decoration: none; }
 .check-pill input:focus-visible + span { outline: 2px solid var(--gold); outline-offset: 2px; }
 .export-actions { display: flex; flex-wrap: wrap; gap: 10px; border-top: 1px solid var(--line); padding-top: 20px; }
 .hint { font-size: 13px; color: var(--muted); margin: 0; }
+.row-actions { text-align: right; width: 1%; }
+.confirm { position: relative; display: inline-block; }
+.confirm summary { list-style: none; cursor: pointer; font-size: 13px; color: var(--muted); padding: 4px 8px; border-radius: 6px; }
+.confirm summary::-webkit-details-marker { display: none; }
+.confirm summary:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.confirm-pop {
+  width: 240px; margin-top: 8px; white-space: normal; text-align: left; justify-items: end;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; display: grid; gap: 10px; font-size: 13px;
+}
+.confirm-pop p { margin: 0; color: var(--text-2); }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; height: 36px; }
+.btn-danger:hover { filter: brightness(1.05); border-color: var(--danger); }
 .sync-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .error-text { color: var(--danger); }
 
