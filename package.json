@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
-    "thumbs": "node --env-file-if-exists=.env.local scripts/thumbs.mjs"
+    "thumbs": "node --env-file-if-exists=.env.local scripts/thumbs.mjs",
+    "drive-sync": "node --env-file-if-exists=.env.local scripts/drive-sync.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

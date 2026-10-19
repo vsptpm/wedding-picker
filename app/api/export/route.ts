@@ -1,7 +1,8 @@
 import { currentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { driveViewUrl } from "@/lib/drive";
 
-type Row = { id: string; album: string; file: string; selects: string | null; maybes: string | null; notes: string | null; nsel: number; nmay: number };
+type Row = { id: string; album: string; file: string; drive_id: string | null; selects: string | null; maybes: string | null; notes: string | null; nsel: number; nmay: number };
 
 /**
  * Final list for the photographer.
@@ -21,7 +22,7 @@ export async function GET(req: Request) {
 
   const rows = db()
     .prepare(
-      `SELECT p.id, m.album, p.file,
+      `SELECT p.id, m.album, p.file, p.drive_id,
          group_concat(CASE WHEN m.status='select' THEN u.name END, '; ') AS selects,
          group_concat(CASE WHEN m.status='maybe' THEN u.name END, '; ') AS maybes,
          group_concat(CASE WHEN m.note IS NOT NULL THEN u.name || ': ' || m.note END, ' | ') AS notes,
@@ -47,8 +48,12 @@ export async function GET(req: Request) {
   } else {
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     body =
-      ["folder,file,selected_by,maybe_by,notes"]
-        .concat(final.map((r) => [r.album, r.file, r.selects, r.maybes, r.notes].map(esc).join(",")))
+      ["folder,file,selected_by,maybe_by,notes,original"]
+        .concat(
+          final.map((r) =>
+            [r.album, r.file, r.selects, r.maybes, r.notes, r.drive_id ? driveViewUrl(r.drive_id) : ""].map(esc).join(","),
+          ),
+        )
         .join("\n") + "\n";
     type = "text/csv";
     ext = "csv";

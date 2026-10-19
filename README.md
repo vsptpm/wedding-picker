@@ -36,14 +36,20 @@ npm run thumbs               # optional: pre-generate thumbnails (~1 min for 7k 
 npm run dev                  # http://localhost:3000
 ```
 
-## Deploy to Ubuntu
-Needs Node 20+ and nginx on the server (`sudo apt install nginx`; Node via nodesource or nvm).
-```bash
-./deploy/deploy.sh user@your-server          # copies app + photos, builds, starts systemd service
-ssh user@your-server 'sudo nano /opt/wedding-picker/.env.local'   # set ACCESS_CODE / ADMIN_CODE
-ssh user@your-server 'sudo systemctl restart wedding-picker'
-```
-Then put `deploy/nginx.conf` in `/etc/nginx/sites-available/`, set your domain, and enable HTTPS
-with `sudo certbot --nginx -d your-domain` — after that set `COOKIE_SECURE=1` in `.env.local`.
+## Server (current deployment)
+- Host: `trading-server` (Ubuntu 24.04, Oracle Cloud) — app in `/var/www/html/wedding-picker`, photos in `/srv/wedding/photos`,
+  database + thumbnails in `/srv/wedding/data`.
+- Runs as systemd service `wedding-picker` on 127.0.0.1:3000, behind nginx on port 80.
+- Settings: `/var/www/html/wedding-picker/.env.local` (then `sudo systemctl restart wedding-picker`).
 
-Back up `/srv/wedding/data/picker.db` — it holds everyone's selections.
+Common tasks:
+```bash
+./deploy/update.sh                                   # ship code changes (builds locally, copies, restarts)
+rsync -a ~/path/to/NewFolder trading-server:/srv/wedding/photos/   # add photos, then Admin › Rescan
+ssh trading-server 'journalctl -u wedding-picker -n 50'            # logs
+scp trading-server:/srv/wedding/data/picker.db ./backup-$(date +%F).db   # back up selections
+```
+
+Setting up a fresh server: install Node 22, nginx and build-essential; copy the app and photos; `npm ci --omit=dev`;
+install `deploy/wedding-picker.service` and `deploy/nginx.conf`; open TCP 80 in the cloud firewall and in iptables.
+For HTTPS, point a domain at the server, run `sudo certbot --nginx -d your-domain`, and set `COOKIE_SECURE=1`.

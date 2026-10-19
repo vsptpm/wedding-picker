@@ -5,7 +5,7 @@ import Icon from "./Icon";
 
 type Status = "select" | "maybe";
 type Mark = { status: Status | null; note: string | null };
-type Photo = { id: string; album: string; file: string };
+type Photo = { id: string; album: string; file: string; original: boolean };
 type UserRow = { id: number; name: string };
 type Me = { id: number; name: string; isAdmin: boolean };
 type MarkRow = [string, number, Status | null, string | null];
@@ -65,6 +65,8 @@ const imgUrl = (p: Photo, deg = 0, full = false) => {
   return `/api/img/${encodeURIComponent(p.album)}/${encodeURIComponent(p.file)}${qs ? `?${qs}` : ""}`;
 };
 const isSideways = (deg = 0) => deg === 90 || deg === 270;
+/** Full-resolution original, served from Google Drive via a signed-in redirect. */
+const originalUrl = (p: Photo) => `/api/original/${encodeURIComponent(p.album)}/${encodeURIComponent(p.file)}`;
 
 /** "BRIDE" → "Bride", "eve photo" → "Eve Photo". */
 const label = (album: string) =>
@@ -165,7 +167,14 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
       .then((d) => {
         setMe(d.me);
         setUsers(d.users);
-        setPhotos((d.photos as [string, string, string][]).map(([id, album, file]) => ({ id, album, file })));
+        setPhotos(
+          (d.photos as [string, string, string, number][]).map(([id, album, file, orig]) => ({
+            id,
+            album,
+            file,
+            original: !!orig,
+          })),
+        );
         setMarks(buildMarks(d.marks));
         setRotations(new Map(d.rotations));
       })
@@ -1068,8 +1077,21 @@ function Viewer({
                 <button role="menuitem" onClick={() => rotate(p.id, 90)}>
                   <Icon name="rotate-cw" size={18} /> Rotate right
                 </button>
-                <a role="menuitem" href={imgUrl(p, deg, true)} download={p.file}>
-                  <Icon name="download" size={18} /> Download
+                {p.original && (
+                  <a role="menuitem" href={originalUrl(p)} className="menu-2line">
+                    <Icon name="download" size={18} />
+                    <span>
+                      Download original
+                      <small>Full resolution · from Google Drive</small>
+                    </span>
+                  </a>
+                )}
+                <a role="menuitem" href={imgUrl(p, deg, true)} download={p.file} className="menu-2line">
+                  <Icon name="image" size={18} />
+                  <span>
+                    {p.original ? "Download preview" : "Download"}
+                    <small>Smaller file{deg ? ", rotated" : ""} · quick on mobile data</small>
+                  </span>
                 </a>
                 <div className="popover-keys">
                   <span>
@@ -1186,6 +1208,11 @@ function Viewer({
         </div>
 
         <div className="v-side">
+          {p.original && (
+            <a className="v-link" href={originalUrl(p)} title="Full-resolution original from Google Drive">
+              <Icon name="download" size={16} /> Original
+            </a>
+          )}
           <button className="v-link" onClick={() => setNoteDraft(mine?.note ?? "")}>
             <Icon name="note" size={16} /> {mine?.note ? "Edit note" : "Add note"}
           </button>

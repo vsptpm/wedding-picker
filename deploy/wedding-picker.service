@@ -1,16 +1,17 @@
 [Unit]
-Description=Wedding Photo Picker (Next.js)
+Description=Wedding photo gallery (Next.js)
 After=network.target
 
 [Service]
 Type=simple
-User=www-data
-WorkingDirectory=/opt/wedding-picker
-EnvironmentFile=/opt/wedding-picker/.env.local
-Environment=NODE_ENV=production PORT=3000
-ExecStart=/usr/bin/npm start
+User=ubuntu
+WorkingDirectory=/var/www/html/wedding-picker
+EnvironmentFile=/var/www/html/wedding-picker/.env.local
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3000
 Restart=always
 RestartSec=3
+MemoryMax=600M
 
 [Install]
 WantedBy=multi-user.target

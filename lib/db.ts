@@ -57,6 +57,9 @@ function open() {
     db.exec(`UPDATE marks SET album = (SELECT album FROM photos WHERE photos.id = marks.photo_id)`);
   }
   db.exec(`CREATE INDEX IF NOT EXISTS marks_album ON marks(album, status)`);
+  // Google Drive file ID of the full-resolution original (see lib/drive.ts).
+  const photoCols = db.prepare(`PRAGMA table_info(photos)`).all() as { name: string }[];
+  if (!photoCols.some((c) => c.name === "drive_id")) db.exec(`ALTER TABLE photos ADD COLUMN drive_id TEXT`);
   return db;
 }
 

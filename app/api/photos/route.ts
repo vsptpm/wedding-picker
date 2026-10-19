@@ -20,9 +20,9 @@ export async function GET(req: Request) {
 
   ensureScanned();
   const photos = d
-    .prepare(`SELECT id, album, file FROM photos WHERE present = 1 ORDER BY album, file`)
+    .prepare(`SELECT id, album, file, drive_id IS NOT NULL FROM photos WHERE present = 1 ORDER BY album, file`)
     .raw()
-    .all() as [string, string, string][];
+    .all() as [string, string, string, number][];
   return NextResponse.json({
     me: { id: user.id, name: user.name, isAdmin: !!user.is_admin },
     users,

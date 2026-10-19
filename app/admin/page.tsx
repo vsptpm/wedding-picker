@@ -4,6 +4,7 @@ import { currentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ensureScanned, scanPhotos } from "@/lib/photos";
 import { siteTitle } from "@/lib/site";
+import { driveFolderId, syncDrive } from "@/lib/drive";
 import Icon from "../Icon";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +37,26 @@ function ago(ts: number | null) {
   return new Date(ts).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
-export default async function Admin() {
+async function syncOriginals() {
+  "use server";
+  if (!(await currentUser())?.is_admin) return;
+  let q: string;
+  try {
+    const r = await syncDrive();
+    q = `synced=${r.matched}&missing=${r.missing}`;
+  } catch (e) {
+    q = `syncError=${encodeURIComponent(e instanceof Error ? e.message : "Sync failed")}`;
+  }
+  revalidatePath("/admin");
+  redirect(`/admin?${q}#originals`);
+}
+
+export default async function Admin({
+  searchParams,
+}: {
+  searchParams: Promise<{ synced?: string; missing?: string; syncError?: string }>;
+}) {
+  const sp = await searchParams;
   const user = await currentUser();
   if (!user) redirect("/login");
   if (!user.is_admin) redirect("/");
@@ -70,6 +90,7 @@ export default async function Admin() {
        FROM marks m GROUP BY m.user_id, m.album`,
     )
     .all() as { user_id: number; album: string; sel: number; may: number }[];
+  const linked = (d.prepare(`SELECT COUNT(*) n FROM photos WHERE present = 1 AND drive_id IS NOT NULL`).get() as { n: number }).n;
   const notes = (d.prepare(`SELECT COUNT(*) n FROM marks WHERE note IS NOT NULL`).get() as { n: number }).n;
   const cell = (uid: number, album: string) => perFolder.find((r) => r.user_id === uid && r.album === album);
   const atLeast = (k: number) => votes.filter((v) => v.n >= k).reduce((a, v) => a + v.photos, 0);
@@ -261,6 +282,29 @@ export default async function Admin() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="panel" id="originals">
+        <div className="panel-head">
+          <h2>Originals on Google Drive</h2>
+          <p>
+            {fmt(linked)} of {fmt(total)} photos are linked to their full-resolution original, so &ldquo;Download
+            original&rdquo; works for them.
+          </p>
+        </div>
+        <form action={syncOriginals} className="panel-body sync-row">
+          <button className="btn" disabled={!driveFolderId()}>
+            Sync from Google Drive
+          </button>
+          {sp.synced != null && (
+            <span className="hint">
+              Linked {fmt(Number(sp.synced))} photos
+              {Number(sp.missing) > 0 ? ` · ${fmt(Number(sp.missing))} have no matching original on Drive` : " · all matched"}
+            </span>
+          )}
+          {sp.syncError && <span className="hint error-text">{sp.syncError}</span>}
+          {!driveFolderId() && <span className="hint">Set DRIVE_FOLDER_ID in .env.local to enable.</span>}
+        </form>
       </section>
 
       <section className="panel">
