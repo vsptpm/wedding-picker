@@ -7,7 +7,7 @@ type Status = "select" | "maybe";
 type Mark = { status: Status | null; note: string | null };
 type Photo = { id: string; album: string; file: string; original: boolean };
 type UserRow = { id: number; name: string };
-type Me = { id: number; name: string; isAdmin: boolean };
+type Me = { id: number; name: string; isAdmin: boolean; isGuest: boolean };
 type MarkRow = [string, number, Status | null, string | null];
 type Marks = Map<string, Map<number, Mark>>;
 type Rotations = Map<string, number>;
@@ -23,6 +23,12 @@ const TABS: { key: Tab; label: string; short: string }[] = [
 ];
 const ALL = "*"; // pseudo-album: every folder
 
+/** Target row height for the justified photo grid at each thumbnail size. */
+const ROW_H: Record<Density, string> = {
+  s: "min(120px, 19vw)",
+  m: "min(210px, 28vw)",
+  l: "min(330px, 52vw)",
+};
 const DENSITY: Record<Density, string> = {
   s: "min(136px, 23vw)",
   m: "min(220px, 31vw)",
@@ -75,7 +81,9 @@ const fmt = (n: number) => n.toLocaleString();
 const plural = (n: number, one: string, many = one + "s") => `${fmt(n)} ${n === 1 ? one : many}`;
 
 function initials(name: string) {
-  const parts = name.trim().split(/\s+/);
+  // Letters only: "Anu (guest)" → "A", not "A(".
+  const parts = name.replace(/\([^)]*\)/g, "").replace(/[^\p{L}\s]/gu, "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "G";
   return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 }
 function hue(name: string) {
@@ -294,19 +302,16 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
         </button>
       </div>
     );
-  if (!me)
-    return (
-      <div className="splash">
-        <p className="wordmark">{title}</p>
-        <div className="loader" aria-label="Loading" />
-      </div>
-    );
+  if (!me) return <LoadingSkeleton title={title} route={route} />;
+  // Guests see one gallery of the shared selection; "home" for them is that gallery.
+  const albumRoute: Extract<Route, { view: "album" | "photo" }> =
+    route.view === "home" ? { view: "album", album: ALL, tab: "all", who: null } : me.isGuest ? { ...route, tab: "all", who: null } : route;
 
   return (
     <>
       <AppBar title={title} route={route} me={me} mySelected={mySelected} go={go} />
 
-      {route.view === "home" ? (
+      {route.view === "home" && !me.isGuest ? (
         <Home
           title={title}
           subtitle={subtitle}
@@ -320,8 +325,10 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
         />
       ) : (
         <AlbumView
-          key={`${route.album}|${route.tab}|${route.who}`}
-          route={route}
+          key={`${albumRoute.album}|${albumRoute.tab}|${albumRoute.who}`}
+          route={albumRoute}
+          title={title}
+          subtitle={subtitle}
           albums={albums}
           photos={photos}
           marks={marks}
@@ -338,6 +345,90 @@ export default function Gallery({ title, subtitle }: { title: string; subtitle: 
         {toast}
       </div>
     </>
+  );
+}
+
+/* -------------------------------- Skeletons ------------------------------- */
+
+/** Fades an image in once it has loaded; until then its container shows a shimmer. */
+const markLoaded = (e: React.SyntheticEvent<HTMLImageElement>) => e.currentTarget.classList.add("is-loaded");
+
+const Bone = ({ w, h, r, className = "" }: { w?: number | string; h: number | string; r?: number; className?: string }) => (
+  <span className={`skel ${className}`} style={{ width: w ?? "100%", height: h, borderRadius: r }} aria-hidden />
+);
+
+/** Layout-shaped placeholder shown while the gallery data loads — matches the page you're about to see. */
+function LoadingSkeleton({ title, route }: { title: string; route: Route }) {
+  const inAlbum = route.view !== "home";
+  return (
+    <div aria-busy="true" aria-label="Loading gallery">
+      <header className="appbar">
+        <div className="appbar-inner">
+          <div className="appbar-left">
+            {inAlbum ? <Bone w={180} h={18} r={6} /> : <span className="wordmark sm">{title}</span>}
+          </div>
+          <div className="appbar-right">
+            <Bone w={96} h={34} r={999} />
+            <Bone w={34} h={34} r={999} />
+          </div>
+        </div>
+      </header>
+      {inAlbum ? (
+        <main className="album">
+          <section className="page-head skel-center">
+            <Bone w={70} h={11} r={4} />
+            <Bone w="min(280px, 70%)" h={52} r={10} />
+            <Bone w="min(320px, 80%)" h={14} r={6} />
+          </section>
+          <div className="toolbar">
+            <div className="toolbar-inner skel-toolbar">
+              <div className="skel-row">
+                {[92, 110, 70, 104, 96].map((w, i) => (
+                  <Bone key={i} w={w} h={16} r={6} />
+                ))}
+              </div>
+              <Bone w={200} h={36} r={999} className="hide-sm" />
+            </div>
+          </div>
+          <div className="grid" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${DENSITY.m}, 1fr))` }}>
+            {Array.from({ length: 24 }, (_, i) => (
+              <span key={i} className="tile skel" style={{ animationDelay: `${(i % 6) * 60}ms` }} />
+            ))}
+          </div>
+        </main>
+      ) : (
+        <main className="home">
+          <section className="hero skel-center">
+            <Bone w="min(420px, 80%)" h={64} r={12} />
+            <Bone w="min(460px, 90%)" h={16} r={6} />
+            <Bone w="min(340px, 70%)" h={16} r={6} />
+            <Bone w={190} h={44} r={999} />
+          </section>
+          <div className="stats skel-stats">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="skel-center">
+                <Bone w={84} h={11} r={4} />
+                <Bone w={56} h={34} r={8} />
+              </div>
+            ))}
+          </div>
+          <div className="folder-grid">
+            {Array.from({ length: 3 }, (_, i) => (
+              <div key={i} className="folder-card">
+                <span className="folder-cover skel" style={{ display: "block" }} />
+                <div className="folder-meta">
+                  <Bone h={3} r={3} />
+                  <div className="folder-meta-row">
+                    <Bone w={90} h={13} r={5} />
+                    <Bone w={70} h={13} r={5} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </main>
+      )}
+    </div>
   );
 }
 
@@ -365,7 +456,7 @@ function AppBar({
     <header className="appbar">
       <div className="appbar-inner">
         <div className="appbar-left">
-          {inAlbum ? (
+          {inAlbum && !(me.isGuest && route.album === ALL) ? (
             <>
               <button className="icon-btn" aria-label="Back to gallery" onClick={() => go({ view: "home" })}>
                 <Icon name="arrow-left" />
@@ -376,13 +467,14 @@ function AppBar({
                 <span aria-current="page">{label(route.album)}</span>
               </nav>
             </>
-          ) : (
+          ) : me.isGuest ? null : (
             <a className="wordmark sm" href="#/">
               {title}
             </a>
           )}
         </div>
         <div className="appbar-right">
+          {!me.isGuest && (
           <button
             className="sel-counter"
             onClick={() => go({ view: "album", album: ALL, tab: "mine", who: null })}
@@ -392,6 +484,7 @@ function AppBar({
             <span className="num">{fmt(mySelected)}</span>
             <span className="lbl">selected</span>
           </button>
+          )}
           <div className="popover-anchor" ref={menuRef}>
             <button className="avatar-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label="Account">
               <Avatar name={me.name} size={34} />
@@ -402,7 +495,7 @@ function AppBar({
                   <Avatar name={me.name} size={36} />
                   <div>
                     <strong>{me.name}</strong>
-                    <span>{me.isAdmin ? "Admin" : "Family"}</span>
+                    <span>{me.isAdmin ? "Admin" : me.isGuest ? "Guest" : "Family"}</span>
                   </div>
                 </div>
                 {me.isAdmin && (
@@ -540,7 +633,14 @@ function Home({
             return (
               <button key={a} className="folder-card" onClick={() => go({ view: "album", album: a, tab: "all", who: null })}>
                 <div className="folder-cover">
-                  {s.cover && <img src={imgUrl(s.cover, rotations.get(s.cover.id))} alt="" loading="lazy" />}
+                  {s.cover && (
+                    <img
+                      src={imgUrl(s.cover, rotations.get(s.cover.id))}
+                      alt=""
+                      loading="lazy"
+                      onLoad={markLoaded}
+                    />
+                  )}
                   <div className="folder-cover-text">
                     <h3>{label(a)}</h3>
                     <span>{plural(s.total, "photo")}</span>
@@ -580,6 +680,8 @@ const EMPTY: Record<Tab, { title: string; body: string }> = {
 
 function AlbumView({
   route,
+  title,
+  subtitle,
   albums,
   photos,
   marks,
@@ -591,6 +693,8 @@ function AlbumView({
   go,
 }: {
   route: Extract<Route, { view: "album" | "photo" }>;
+  title: string;
+  subtitle: string;
   albums: string[];
   photos: Photo[];
   marks: Marks;
@@ -721,21 +825,31 @@ function AlbumView({
   };
 
   const showFolder = album === ALL;
+  const guest = me.isGuest;
   const empty = search.trim()
     ? { title: "No matches", body: `No photo names contain “${search.trim()}”.` }
-    : EMPTY[tab];
+    : guest
+      ? { title: "No photos yet", body: "Check back soon." }
+      : EMPTY[tab];
 
   return (
     <main className="album">
       <section className="page-head">
-        <p className="eyebrow">{album === ALL ? "Every folder" : "Folder"}</p>
-        <h1 className="display">{label(album)}</h1>
-        <p className="meta">
-          {plural(counts.all, "photo")} · {fmt(counts.mine)} selected by you
-          {counts.team > 0 && <> · {fmt(counts.team)} picked by family</>}
-        </p>
+        <div className="page-head-main">
+          {guest && subtitle && <p className="eyebrow">{subtitle}</p>}
+          <h1 className="display">{guest && album === ALL ? title : label(album)}</h1>
+          <p className="meta">
+            {plural(counts.all, "photo")}
+            {guest ? null : (
+              <>
+                {" "}· {fmt(counts.mine)} selected by you
+                {counts.team > 0 && <> · {fmt(counts.team)} picked by family</>}
+              </>
+            )}
+          </p>
+        </div>
         {albums.length > 1 && (
-          <div className="folder-filter" role="group" aria-label="Folder">
+          <div className="folder-switch" role="group" aria-label="Folder">
             {[ALL, ...albums].map((a) => (
               <button
                 key={a}
@@ -753,6 +867,9 @@ function AlbumView({
 
       <div className="toolbar">
         <div className="toolbar-inner">
+          {guest ? (
+            <span />
+          ) : (
           <div className="tabs" role="tablist">
             {TABS.map((t) => (
               <button
@@ -768,6 +885,7 @@ function AlbumView({
               </button>
             ))}
           </div>
+          )}
           <div className="tools">
             {tab === "team" && (
               <label className="select">
@@ -822,14 +940,14 @@ function AlbumView({
           </div>
           <h2>{empty.title}</h2>
           <p>{empty.body}</p>
-          {tab !== "all" && (
+          {tab !== "all" && !guest && (
             <button className="btn" onClick={() => go({ view: "album", album, tab: "all", who: null }, true)}>
               Browse all photos
             </button>
           )}
         </div>
       ) : (
-        <div className={`grid d-${density}`} style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${DENSITY[density]}, 1fr))` }}>
+        <div className={`grid justified d-${density}`}>
           {list.slice(0, limit).map((p) => {
             const pm = marks.get(p.id);
             const mine = pm?.get(me.id)?.status;
@@ -841,10 +959,17 @@ function AlbumView({
                 key={p.id}
                 id={`t-${p.file}`}
                 className={`tile ${selected ? "is-selected" : ""} ${mine === "maybe" ? "is-maybe" : ""} ${isSideways(deg) ? "is-portrait" : ""}`}
+                // Justified rows: each tile grows in proportion to its shape, so every photo shows uncropped and
+                // rows fill the width. Previews are all 3:2, turned 2:3 when rotated a quarter turn.
+                style={(() => {
+                  const ar = isSideways(deg) ? 2 / 3 : 3 / 2;
+                  return { flex: `${ar} 1 calc(${ar} * ${ROW_H[density]})`, aspectRatio: `${ar}` };
+                })()}
               >
                 <button className="tile-open" onClick={() => open(p)} aria-label={`Open ${p.file}`}>
-                  <img src={imgUrl(p, deg)} alt="" loading="lazy" decoding="async" />
+                  <img src={imgUrl(p, deg)} alt="" loading="lazy" decoding="async" onLoad={markLoaded} />
                 </button>
+                {!guest && (
                 <button
                   className="tile-check"
                   aria-pressed={selected}
@@ -853,11 +978,13 @@ function AlbumView({
                 >
                   <Icon name="check" size={16} strokeWidth={2.5} />
                 </button>
+                )}
                 {mine === "maybe" && (
                   <span className="tile-maybe" title="Maybe">
                     <Icon name="star" size={13} filled />
                   </span>
                 )}
+                {!guest && (
                 <div className="tile-tools">
                   <button onClick={() => rotate(p.id, -90)} aria-label="Rotate left" title="Rotate left">
                     <Icon name="rotate-ccw" size={15} />
@@ -866,6 +993,7 @@ function AlbumView({
                     <Icon name="rotate-cw" size={15} />
                   </button>
                 </div>
+                )}
                 {(showFolder || others > 0) && (
                   <div className="tile-foot">
                     {showFolder && <span className="tile-tag">{label(p.album)}</span>}
@@ -883,7 +1011,7 @@ function AlbumView({
       )}
       <div ref={sentinel} style={{ height: 1 }} />
 
-      {list.length > 0 && limit >= list.length && album !== ALL && tab === "all" && !search && (
+      {list.length > 0 && limit >= list.length && album !== ALL && tab === "all" && !search && !guest && (
         <div className="end">
           <span className="end-rule" />
           <p className="eyebrow">End of {label(album)}</p>
@@ -955,6 +1083,7 @@ function Viewer({
   const nameOf = (id: number) => users.find((u) => u.id === id)?.name ?? "Someone";
   const selectedBy = pm ? [...pm].filter(([, x]) => x.status === "select").map(([u]) => u) : [];
   const notes = pm ? [...pm].filter(([, x]) => x.note).map(([u, x]) => ({ u, note: x.note! })) : [];
+  const guest = me.isGuest;
   const isSel = mine?.status === "select";
   const isMaybe = mine?.status === "maybe";
 
@@ -962,13 +1091,13 @@ function Viewer({
     setLoaded(false);
     setNoteDraft(null);
     // Warm the cache for neighbours so arrow keys feel instant.
-    for (const d of [1, 2, -1]) {
+    for (const d of [1, -1]) {
       const n = list[index + d];
-      if (n) new Image().src = imgUrl(n, rotations.get(n.id), true);
+      if (n) new Image().src = imgUrl(n, 0, true); // unrotated original: served straight from disk, no server work
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, list]);
-  useEffect(() => setLoaded(false), [deg]);
+  
   useEffect(() => persist("wp.autoNext", autoNext), [autoNext]);
 
   // Lock page scroll behind the viewer.
@@ -986,10 +1115,13 @@ function Viewer({
   useEffect(() => {
     cur.current = index;
   }, [index]);
+  // Which way we moved, so the next photo can slide in from that side.
+  const dir = useRef<1 | -1 | 0>(0);
   const step = useCallback(
     (d: number) => {
       const i = cur.current + d;
       if (i < 0 || i >= list.length) return;
+      dir.current = d > 0 ? 1 : -1;
       cur.current = i;
       onIndex(i);
     },
@@ -1009,8 +1141,8 @@ function Viewer({
     [list, me.id, save, autoNext, next],
   );
 
-  const keyState = useRef({ next, prev, onClose, toggle, rotate, noteOpen: false });
-  keyState.current = { next, prev, onClose, toggle, rotate, noteOpen: noteDraft != null };
+  const keyState = useRef({ next, prev, onClose, toggle, rotate, noteOpen: false, guest });
+  keyState.current = { next, prev, onClose, toggle, rotate, noteOpen: noteDraft != null, guest };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Ignore keys only while typing; a focused toggle or button must not swallow shortcuts.
@@ -1023,6 +1155,7 @@ function Viewer({
       if (e.key === "ArrowRight") k.next();
       else if (e.key === "ArrowLeft") k.prev();
       else if (e.key === "Escape") k.onClose();
+      else if (k.guest) return; // guests can only browse
       else if (e.key === " " || e.key === "Enter" || key === "s") {
         e.preventDefault();
         k.toggle("select");
@@ -1037,8 +1170,9 @@ function Viewer({
     return () => window.removeEventListener("keydown", onKey);
   }, [list, me.id]);
 
-  // Swipe left/right on touch screens.
+  // Swipe left/right on touch screens; the photo follows the finger.
   const touch = useRef<{ x: number; y: number } | null>(null);
+  const slideRef = useRef<HTMLDivElement>(null);
 
   return (
     <div className="viewer" role="dialog" aria-modal="true" aria-label={`Photo ${p.file}`}>
@@ -1053,11 +1187,13 @@ function Viewer({
           </span>
         </div>
         <div className="v-top-right">
+          {!guest && (
           <label className="switch" title="Move to the next photo after you select one">
             <input type="checkbox" checked={autoNext} onChange={(e) => setAutoNext(e.target.checked)} />
             <span className="switch-track" />
             <span className="switch-label">Auto-advance</span>
           </label>
+          )}
           <div className="popover-anchor" ref={menuRef}>
             <button className="v-icon" onClick={() => setMenu((m) => !m)} aria-label="More options" aria-expanded={menu}>
               <Icon name="more" size={22} />
@@ -1068,15 +1204,19 @@ function Viewer({
                   <strong>{p.file}</strong>
                   <span>{label(p.album)}</span>
                 </div>
-                <button role="menuitem" onClick={() => setNoteDraft(mine?.note ?? "")}>
-                  <Icon name="note" size={18} /> {mine?.note ? "Edit note" : "Add note for photographer"}
-                </button>
-                <button role="menuitem" onClick={() => rotate(p.id, -90)}>
-                  <Icon name="rotate-ccw" size={18} /> Rotate left
-                </button>
-                <button role="menuitem" onClick={() => rotate(p.id, 90)}>
-                  <Icon name="rotate-cw" size={18} /> Rotate right
-                </button>
+                {!guest && (
+                  <>
+                    <button role="menuitem" onClick={() => setNoteDraft(mine?.note ?? "")}>
+                      <Icon name="note" size={18} /> {mine?.note ? "Edit note" : "Add note for photographer"}
+                    </button>
+                    <button role="menuitem" onClick={() => rotate(p.id, -90)}>
+                      <Icon name="rotate-ccw" size={18} /> Rotate left
+                    </button>
+                    <button role="menuitem" onClick={() => rotate(p.id, 90)}>
+                      <Icon name="rotate-cw" size={18} /> Rotate right
+                    </button>
+                  </>
+                )}
                 {p.original && (
                   <a role="menuitem" href={originalUrl(p)} className="menu-2line">
                     <Icon name="download" size={18} />
@@ -1093,6 +1233,7 @@ function Viewer({
                     <small>Smaller file{deg ? ", rotated" : ""} · quick on mobile data</small>
                   </span>
                 </a>
+                {!guest && (
                 <div className="popover-keys">
                   <span>
                     <kbd>←</kbd>
@@ -1115,6 +1256,7 @@ function Viewer({
                     <kbd>Esc</kbd> Close
                   </span>
                 </div>
+                )}
               </div>
             )}
           </div>
@@ -1123,25 +1265,55 @@ function Viewer({
 
       <div
         className="v-stage"
-        onTouchStart={(e) => (touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY })}
+        onTouchStart={(e) => {
+          touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          if (slideRef.current) slideRef.current.style.transition = "none";
+        }}
+        onTouchMove={(e) => {
+          const t = touch.current;
+          if (!t || !slideRef.current) return;
+          const dx = e.touches[0].clientX - t.x;
+          const dy = e.touches[0].clientY - t.y;
+          if (Math.abs(dx) < Math.abs(dy)) return;
+          // Follow the finger, with resistance at the first/last photo.
+          const atEdge = (dx > 0 && index === 0) || (dx < 0 && index === list.length - 1);
+          slideRef.current.style.transform = `translateX(${atEdge ? dx * 0.25 : dx}px)`;
+          slideRef.current.style.opacity = String(1 - Math.min(Math.abs(dx) / 900, 0.35));
+        }}
         onTouchEnd={(e) => {
           const t = touch.current;
+          touch.current = null;
           if (!t) return;
           const dx = e.changedTouches[0].clientX - t.x;
           const dy = e.changedTouches[0].clientY - t.y;
-          if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) (dx < 0 ? next : prev)();
-          touch.current = null;
+          const el = slideRef.current;
+          const go = Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy);
+          const canGo = dx < 0 ? index < list.length - 1 : index > 0;
+          if (go && canGo) (dx < 0 ? next : prev)();
+          else if (el) {
+            // Not far enough: spring back into place.
+            el.style.transition = "transform 0.25s cubic-bezier(.2,.8,.2,1), opacity 0.25s";
+            el.style.transform = "";
+            el.style.opacity = "";
+          }
         }}
       >
-        <img src={imgUrl(p, deg)} alt="" className="v-img v-placeholder" />
-        <img
-          key={`${p.id}@${deg}`}
-          src={imgUrl(p, deg, true)}
-          alt={p.file}
-          className={`v-img ${loaded ? "" : "loading"}`}
-          onLoad={() => setLoaded(true)}
-          onDoubleClick={() => toggle("select")}
-        />
+        <div
+          key={p.id}
+          ref={slideRef}
+          className={`v-slide ${dir.current === 1 ? "from-right" : dir.current === -1 ? "from-left" : ""}`}
+        >
+          <img src={imgUrl(p, deg)} alt="" className="v-img v-placeholder" />
+          {/* Full size is fetched unrotated (cheap for the server) and turned upright by CSS. */}
+          <img
+            key={p.id}
+            src={imgUrl(p, 0, true)}
+            alt={p.file}
+            className={`v-img ${loaded ? "" : "loading"} ${deg ? `rot rot-${deg}` : ""}`}
+            onLoad={() => setLoaded(true)}
+            onDoubleClick={() => !guest && toggle("select")}
+          />
+        </div>
         <button className="v-nav prev" onClick={prev} disabled={index === 0} aria-label="Previous photo">
           <Icon name="chevron-left" size={28} />
         </button>
@@ -1152,7 +1324,7 @@ function Viewer({
 
       <div className="v-bar">
         <div className="v-people">
-          {selectedBy.length > 0 && (
+          {!guest && selectedBy.length > 0 && (
             <div className="v-pickers">
               <span className="stack">
                 {selectedBy.slice(0, 4).map((u) => (
@@ -1166,7 +1338,7 @@ function Viewer({
               </span>
             </div>
           )}
-          {notes.slice(0, 2).map(({ u, note }) => (
+          {!guest && notes.slice(0, 2).map(({ u, note }) => (
             <button
               key={u}
               className="v-note"
@@ -1185,6 +1357,13 @@ function Viewer({
           <button className="v-icon only-touch" onClick={prev} disabled={index === 0} aria-label="Previous photo">
             <Icon name="chevron-left" size={22} />
           </button>
+          {guest ? (
+            <a className="v-select" href={p.original ? originalUrl(p) : imgUrl(p, deg, true)} download={p.original ? undefined : p.file}>
+              <Icon name="download" size={20} />
+              <span>{p.original ? "Download original" : "Download"}</span>
+            </a>
+          ) : (
+          <>
           <button className={`v-btn ${isMaybe ? "on-maybe" : ""}`} onClick={() => toggle("maybe")} aria-pressed={isMaybe} title="Maybe (M)">
             <Icon name="star" size={19} filled={isMaybe} />
             <span>Maybe</span>
@@ -1202,6 +1381,8 @@ function Viewer({
             <Icon name="rotate-cw" size={19} />
             <span>Rotate</span>
           </button>
+          </>
+          )}
           <button className="v-icon only-touch" onClick={next} disabled={index === list.length - 1} aria-label="Next photo">
             <Icon name="chevron-right" size={22} />
           </button>
@@ -1213,9 +1394,11 @@ function Viewer({
               <Icon name="download" size={16} /> Original
             </a>
           )}
-          <button className="v-link" onClick={() => setNoteDraft(mine?.note ?? "")}>
-            <Icon name="note" size={16} /> {mine?.note ? "Edit note" : "Add note"}
-          </button>
+          {!guest && (
+            <button className="v-link" onClick={() => setNoteDraft(mine?.note ?? "")}>
+              <Icon name="note" size={16} /> {mine?.note ? "Edit note" : "Add note"}
+            </button>
+          )}
         </div>
       </div>
 

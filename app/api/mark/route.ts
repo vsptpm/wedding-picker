@@ -5,6 +5,7 @@ import { STATUSES, Status, db } from "@/lib/db";
 export async function POST(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (user.is_guest) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   const body = (await req.json()) as { photoIds?: string[]; status?: Status | null; note?: string | null };
   const ids = Array.isArray(body.photoIds) ? body.photoIds.slice(0, 5000) : [];
   if (!ids.length) return NextResponse.json({ error: "photoIds required" }, { status: 400 });

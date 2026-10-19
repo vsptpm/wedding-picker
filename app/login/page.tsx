@@ -10,9 +10,9 @@ async function login(formData: FormData) {
   // People sometimes type the access code into the name box — catch that instead of creating a user called "wedding2026".
   const codes = [process.env.ACCESS_CODE, process.env.ADMIN_CODE].filter(Boolean).map((c) => c!.toLowerCase());
   if (codes.includes(name.toLowerCase())) redirect(`/login?error=name`);
-  const token = signIn(name, code);
-  if (!token) redirect(`/login?error=code&name=${encodeURIComponent(name)}`);
-  (await cookies()).set(SESSION_COOKIE, token, {
+  const result = signIn(name, code);
+  if ("error" in result) redirect(`/login?error=${result.error === "name" ? "needname" : "code"}&name=${encodeURIComponent(name)}`);
+  (await cookies()).set(SESSION_COOKIE, result.token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.COOKIE_SECURE === "1",
@@ -25,6 +25,7 @@ async function login(formData: FormData) {
 const ERRORS: Record<string, string> = {
   code: "That access code isn't right. Check the message you were sent, or ask the couple.",
   name: "Please enter your own name in the first box — the access code goes in the second.",
+  needname: "Please enter your name so the family knows who picked which photo.",
 };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; name?: string }> }) {
@@ -46,14 +47,13 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <span>Your name</span>
           <input
             name="name"
-            required
             maxLength={40}
             autoComplete="name"
             placeholder="e.g. Anjali Menon"
-            defaultValue={error === "code" ? name : undefined}
+            defaultValue={error === "code" || error === "needname" ? name : undefined}
             autoFocus={!name}
           />
-          <small>Shown next to the photos you pick.</small>
+          <small>Shown next to the photos you pick. Optional if you were given a guest PIN.</small>
         </label>
         <label className="field">
           <span>Access code</span>

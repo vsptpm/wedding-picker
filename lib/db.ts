@@ -57,6 +57,10 @@ function open() {
     db.exec(`UPDATE marks SET album = (SELECT album FROM photos WHERE photos.id = marks.photo_id)`);
   }
   db.exec(`CREATE INDEX IF NOT EXISTS marks_album ON marks(album, status)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+  // Guests (signed in with GUEST_CODE) only see the shared selection and can't change anything.
+  const userCols = db.prepare(`PRAGMA table_info(users)`).all() as { name: string }[];
+  if (!userCols.some((c) => c.name === "is_guest")) db.exec(`ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0`);
   // Google Drive file ID of the full-resolution original (see lib/drive.ts).
   const photoCols = db.prepare(`PRAGMA table_info(photos)`).all() as { name: string }[];
   if (!photoCols.some((c) => c.name === "drive_id")) db.exec(`ALTER TABLE photos ADD COLUMN drive_id TEXT`);

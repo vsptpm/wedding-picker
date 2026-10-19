@@ -39,7 +39,11 @@ npm run dev                  # http://localhost:3000
 ## Server (current deployment)
 - Host: `trading-server` (Ubuntu 24.04, Oracle Cloud) — app in `/var/www/html/wedding-picker`, photos in `/srv/wedding/photos`,
   database + thumbnails in `/srv/wedding/data`.
-- Runs as systemd service `wedding-picker` on 127.0.0.1:3000, behind nginx on port 80.
+- Live at **https://140.245.198.169** — systemd service `wedding-picker` on 127.0.0.1:3000 behind nginx.
+  HTTP redirects to HTTPS. The certificate is a short-lived Let's Encrypt IP certificate that certbot (snap) renews
+  automatically; see `deploy/nginx.conf`. Oracle Security List and iptables allow TCP 80 and 443.
+- Originals: `DRIVE_FOLDER_ID` points at the photographer's Google Drive folder; `npm run drive-sync` (or Admin ›
+  Sync from Google Drive) links each photo to its full-resolution original.
 - Settings: `/var/www/html/wedding-picker/.env.local` (then `sudo systemctl restart wedding-picker`).
 
 Common tasks:
@@ -52,4 +56,5 @@ scp trading-server:/srv/wedding/data/picker.db ./backup-$(date +%F).db   # back 
 
 Setting up a fresh server: install Node 22, nginx and build-essential; copy the app and photos; `npm ci --omit=dev`;
 install `deploy/wedding-picker.service` and `deploy/nginx.conf`; open TCP 80 in the cloud firewall and in iptables.
-For HTTPS, point a domain at the server, run `sudo certbot --nginx -d your-domain`, and set `COOKIE_SECURE=1`.
+To move to a domain later: point it at the server, issue a certificate with `-d your-domain`, update the cert paths in
+nginx, and keep `COOKIE_SECURE=1`.

@@ -39,6 +39,23 @@ export function photoPath(id: string): string | null {
   return abs.startsWith(PHOTOS_DIR + path.sep) ? abs : null;
 }
 
+// Image work runs on libuv's small thread pool, which also serves file reads. Keep sharp single-threaded and allow
+// only a couple of jobs at once so a burst of photo requests can't stall ordinary pages (like sign-in) behind it.
+sharp.concurrency(1);
+const MAX_JOBS = 2;
+let running = 0;
+const waiting: (() => void)[] = [];
+async function limited<T>(job: () => Promise<T>): Promise<T> {
+  if (running >= MAX_JOBS) await new Promise<void>((r) => waiting.push(r));
+  running++;
+  try {
+    return await job();
+  } finally {
+    running--;
+    waiting.shift()?.();
+  }
+}
+
 const THUMB_DIR = path.join(DATA_DIR, "thumbs");
 const ROTATED_DIR = path.join(DATA_DIR, "rotated");
 export const THUMB_WIDTH = 480;
@@ -51,7 +68,7 @@ function cached(out: string, make: (tmp: string) => Promise<unknown>): Promise<s
     p = (async () => {
       fs.mkdirSync(path.dirname(out), { recursive: true });
       const tmp = out + ".tmp";
-      await make(tmp);
+      await limited(() => make(tmp));
       fs.renameSync(tmp, out);
       return out;
     })().finally(() => inflight.delete(out));

@@ -6,8 +6,17 @@ import { ensureScanned, scanPhotos } from "@/lib/photos";
 import { siteTitle } from "@/lib/site";
 import { driveFolderId, syncDrive } from "@/lib/drive";
 import Icon from "../Icon";
+import { setSharedMinVotes, sharedCount, sharedMinVotes } from "@/lib/shared";
 
 export const dynamic = "force-dynamic";
+
+async function setShared(formData: FormData) {
+  "use server";
+  if (!(await currentUser())?.is_admin) return;
+  setSharedMinVotes(Number(formData.get("min")) || 1);
+  revalidatePath("/admin");
+  redirect("/admin?shared=1#guests");
+}
 
 async function rescan() {
   "use server";
@@ -19,7 +28,8 @@ async function rescan() {
 const label = (a: string) => a.toLowerCase().replace(/(^|\s|[-_])\p{L}/gu, (c) => c.toUpperCase());
 const fmt = (n: number) => n.toLocaleString("en-IN");
 function initials(name: string) {
-  const p = name.trim().split(/\s+/);
+  const p = name.replace(/\([^)]*\)/g, "").replace(/[^\p{L}\s]/gu, "").trim().split(/\s+/).filter(Boolean);
+  if (!p.length) return "G";
   return ((p[0]?.[0] ?? "") + (p.length > 1 ? p[p.length - 1][0] : "")).toUpperCase();
 }
 function hue(name: string) {
@@ -43,7 +53,7 @@ async function syncOriginals() {
   let q: string;
   try {
     const r = await syncDrive();
-    q = `synced=${r.matched}&missing=${r.missing}`;
+    q = `synced=${r.matched}&missing=${r.missing}&rotated=${r.rotated}`;
   } catch (e) {
     q = `syncError=${encodeURIComponent(e instanceof Error ? e.message : "Sync failed")}`;
   }
@@ -54,7 +64,7 @@ async function syncOriginals() {
 export default async function Admin({
   searchParams,
 }: {
-  searchParams: Promise<{ synced?: string; missing?: string; syncError?: string }>;
+  searchParams: Promise<{ synced?: string; missing?: string; rotated?: string; syncError?: string; shared?: string }>;
 }) {
   const sp = await searchParams;
   const user = await currentUser();
@@ -69,7 +79,7 @@ export default async function Admin({
          COALESCE(SUM(m.status='select'),0) sel, COALESCE(SUM(m.status='maybe'),0) may,
          COALESCE(SUM(m.status IS NOT NULL),0) seen, COALESCE(SUM(m.note IS NOT NULL),0) notes,
          MAX(m.updated_at) last
-       FROM users u LEFT JOIN marks m ON m.user_id = u.id GROUP BY u.id ORDER BY sel DESC, u.name`,
+       FROM users u LEFT JOIN marks m ON m.user_id = u.id WHERE u.is_guest = 0 GROUP BY u.id ORDER BY sel DESC, u.name`,
     )
     .all() as { id: number; name: string; is_admin: number; sel: number; may: number; seen: number; notes: number; last: number | null }[];
   const votes = d
@@ -92,6 +102,11 @@ export default async function Admin({
     .all() as { user_id: number; album: string; sel: number; may: number }[];
   const linked = (d.prepare(`SELECT COUNT(*) n FROM photos WHERE present = 1 AND drive_id IS NOT NULL`).get() as { n: number }).n;
   const notes = (d.prepare(`SELECT COUNT(*) n FROM marks WHERE note IS NOT NULL`).get() as { n: number }).n;
+  const sharedMin = sharedMinVotes();
+  const guestCode = !!process.env.GUEST_CODE;
+  const guestVisits = (
+    d.prepare(`SELECT COUNT(*) n, COUNT(DISTINCT u.id) people FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.is_guest = 1`).get() as { n: number; people: number }
+  );
   const cell = (uid: number, album: string) => perFolder.find((r) => r.user_id === uid && r.album === album);
   const atLeast = (k: number) => votes.filter((v) => v.n >= k).reduce((a, v) => a + v.photos, 0);
   const maxVotes = Math.max(1, Math.min(5, people.length));
@@ -284,6 +299,44 @@ export default async function Admin({
         </div>
       </section>
 
+      <section className="panel" id="guests">
+        <div className="panel-head">
+          <h2>Guest gallery</h2>
+          <p>
+            Anyone who signs in with the <strong>guest PIN</strong> sees only the shared photos below and can download
+            the originals. They can&apos;t pick, rotate or see who chose what.
+          </p>
+        </div>
+        <form action={setShared} className="panel-body export-form">
+          <div className="export-row">
+            <span>Share photos selected by at least</span>
+            <div className="check-row">
+              {Array.from({ length: maxVotes }, (_, i) => i + 1).map((n) => (
+                <label key={n} className="check-pill">
+                  <input type="radio" name="min" value={n} defaultChecked={n === sharedMin} />
+                  <span>
+                    {n} {n === 1 ? "person" : "people"} <em>{fmt(sharedCount(n))}</em>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="sync-row">
+            <button className="btn">Save</button>
+            <span className="hint">
+              Guests currently see <strong>{fmt(sharedCount())}</strong> photos. The list updates live as the family
+              keeps picking.
+              {sp.shared && " Saved."}
+            </span>
+          </div>
+          <p className="hint">
+            {guestCode
+              ? `Guest sign-ins so far: ${fmt(guestVisits.n)}.`
+              : "No guest PIN is set yet — add GUEST_CODE to .env.local on the server and restart."}
+          </p>
+        </form>
+      </section>
+
       <section className="panel" id="originals">
         <div className="panel-head">
           <h2>Originals on Google Drive</h2>
@@ -300,6 +353,7 @@ export default async function Admin({
             <span className="hint">
               Linked {fmt(Number(sp.synced))} photos
               {Number(sp.missing) > 0 ? ` · ${fmt(Number(sp.missing))} have no matching original on Drive` : " · all matched"}
+              {Number(sp.rotated) > 0 && ` · ${fmt(Number(sp.rotated))} sideways photos turned upright`}
             </span>
           )}
           {sp.syncError && <span className="hint error-text">{sp.syncError}</span>}

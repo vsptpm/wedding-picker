@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { autoOrient } from "./exif.mjs";
 
 /**
  * Originals live in a link-shared Google Drive folder with one sub-folder per album (same names as PHOTOS_DIR).
@@ -41,7 +42,9 @@ export async function syncDrive() {
   const { missing } = d
     .prepare(`SELECT COUNT(*) missing FROM photos WHERE present = 1 AND drive_id IS NULL`)
     .get() as { missing: number };
-  return { folders: albums.length, driveFiles: seen, matched, missing };
+  // Read the camera's orientation for newly linked photos so sideways shots show upright (manual rotations win).
+  const orient = await autoOrient(d);
+  return { folders: albums.length, driveFiles: seen, matched, missing, rotated: orient.rotated };
 }
 
 export const driveDownloadUrl = (id: string) =>

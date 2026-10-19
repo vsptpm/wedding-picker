@@ -2,10 +2,13 @@ import fs from "node:fs";
 import { Readable } from "node:stream";
 import { currentUser } from "@/lib/auth";
 import { fullPath, photoPath, thumbPath } from "@/lib/photos";
+import { isShared } from "@/lib/shared";
 
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
-  if (!(await currentUser())) return new Response("unauthorized", { status: 401 });
+  const user = await currentUser();
+  if (!user) return new Response("unauthorized", { status: 401 });
   const id = (await ctx.params).path.map(decodeURIComponent).join("/");
+  if (user.is_guest && !isShared(id)) return new Response("not found", { status: 404 });
   const src = photoPath(id);
   if (!src) return new Response("not found", { status: 404 });
 

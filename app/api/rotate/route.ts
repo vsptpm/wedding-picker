@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 export async function POST(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (user.is_guest) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   const { photoIds, deg } = (await req.json()) as { photoIds?: string[]; deg?: number };
   const ids = Array.isArray(photoIds) ? photoIds.slice(0, 5000) : [];
   if (!ids.length || ![0, 90, 180, 270].includes(deg as number))
