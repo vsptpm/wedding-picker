@@ -7,8 +7,27 @@ import { siteTitle } from "@/lib/site";
 import { driveFolderId, syncDrive } from "@/lib/drive";
 import Icon from "../Icon";
 import { setSharedMinVotes, sharedCount, sharedMinVotes } from "@/lib/shared";
+import { type CodeError, type EditableRole, generateCode, getCode, isOverridden, setCode, validateCode } from "@/lib/codes";
 
 export const dynamic = "force-dynamic";
+
+async function changeCode(formData: FormData) {
+  "use server";
+  if (!(await currentUser())?.is_admin) return;
+  const role = formData.get("role") === "guest" ? "guest" : "family";
+  const intent = String(formData.get("intent") || "save");
+  let code: string | null;
+  if (intent === "off") code = null;
+  else if (intent === "generate") code = generateCode(role);
+  else {
+    code = String(formData.get("code") ?? "");
+    const err = validateCode(role, code);
+    if (err) redirect(`/admin?codeError=${err}&codeRole=${role}#codes`);
+  }
+  const ended = setCode(role, code);
+  revalidatePath("/admin");
+  redirect(`/admin?codeChanged=${role}&ended=${ended}&off=${code ? 0 : 1}#codes`);
+}
 
 async function removePerson(formData: FormData) {
   "use server";
@@ -84,6 +103,11 @@ export default async function Admin({
     syncError?: string;
     shared?: string;
     removed?: string;
+    codeChanged?: string;
+    codeError?: string;
+    codeRole?: string;
+    ended?: string;
+    off?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -123,7 +147,7 @@ export default async function Admin({
   const linked = (d.prepare(`SELECT COUNT(*) n FROM photos WHERE present = 1 AND drive_id IS NOT NULL`).get() as { n: number }).n;
   const notes = (d.prepare(`SELECT COUNT(*) n FROM marks WHERE note IS NOT NULL`).get() as { n: number }).n;
   const sharedMin = sharedMinVotes();
-  const guestCode = !!process.env.GUEST_CODE;
+  const guestCode = !!getCode("guest");
   const guestVisits = (
     d.prepare(`SELECT COUNT(*) n, COUNT(DISTINCT u.id) people FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.is_guest = 1`).get() as { n: number; people: number }
   );
@@ -336,6 +360,93 @@ export default async function Admin({
         </div>
       </section>
 
+      <section className="panel" id="codes">
+        <div className="panel-head">
+          <h2>Access codes</h2>
+          <p>
+            Changing a code signs out everyone who used the old one — use it if a code was shared too widely. The admin
+            code can only be changed in the server settings file.
+          </p>
+        </div>
+        <div className="panel-body codes">
+          {(["family", "guest"] as EditableRole[]).map((role) => {
+            const current = getCode(role);
+            const justChanged = sp.codeChanged === role;
+            const err = sp.codeRole === role ? (sp.codeError as CodeError | undefined) : undefined;
+            return (
+              <form key={role} action={changeCode} className="code-row">
+                <input type="hidden" name="role" value={role} />
+                <div className="code-info">
+                  <strong>{role === "family" ? "Family code" : "Guest PIN"}</strong>
+                  <span className="hint">
+                    {role === "family"
+                      ? "Browse every photo and make selections."
+                      : "View and download the shared photos only."}
+                  </span>
+                  <span className="code-current">
+                    {current ? (
+                      <details open={justChanged}>
+                        <summary>Show current code</summary>
+                        <code>{current}</code>
+                        {!isOverridden(role) && <span className="hint"> · from the server settings file</span>}
+                      </details>
+                    ) : (
+                      <span className="badge">Off</span>
+                    )}
+                  </span>
+                </div>
+                <div className="code-edit">
+                  <input
+                    name="code"
+                    type="text"
+                    inputMode={role === "guest" ? "numeric" : "text"}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={current ? "New code" : "Code to turn on"}
+                    minLength={6}
+                    maxLength={64}
+                    aria-label={`New ${role} code`}
+                  />
+                  <button className="btn" name="intent" value="save">
+                    {current ? "Change" : "Turn on"}
+                  </button>
+                  <button className="btn btn-ghost" name="intent" value="generate" formNoValidate>
+                    Generate
+                  </button>
+                  {role === "guest" && current && (
+                    <button className="btn btn-ghost danger" name="intent" value="off" formNoValidate>
+                      Turn off
+                    </button>
+                  )}
+                </div>
+                {err && (
+                  <p className="form-error code-msg">
+                    {
+                      {
+                        short: "Use at least 6 characters.",
+                        long: "Keep it under 64 characters.",
+                        spaces: "Codes can't start or end with a space.",
+                        same: "That code is already used for another kind of access — pick a different one.",
+                      }[err]
+                    }
+                  </p>
+                )}
+                {justChanged && (
+                  <p className="code-msg code-ok">
+                    {sp.off === "1"
+                      ? "Guest access turned off."
+                      : role === "family"
+                        ? "Family code changed — share the new code with the family."
+                        : "Guest PIN changed — share the new PIN with guests."}
+                    {Number(sp.ended) > 0 && ` ${fmt(Number(sp.ended))} signed-in ${Number(sp.ended) === 1 ? "device was" : "devices were"} signed out.`}
+                  </p>
+                )}
+              </form>
+            );
+          })}
+        </div>
+      </section>
+
       <section className="panel" id="guests">
         <div className="panel-head">
           <h2>Guest gallery</h2>
@@ -369,7 +480,7 @@ export default async function Admin({
           <p className="hint">
             {guestCode
               ? `Guest sign-ins so far: ${fmt(guestVisits.n)}.`
-              : "No guest PIN is set yet — add GUEST_CODE to .env.local on the server and restart."}
+              : "Guest access is turned off — turn it on under Access codes above."}
           </p>
         </form>
       </section>

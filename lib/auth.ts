@@ -1,19 +1,11 @@
 import { cookies } from "next/headers";
 import crypto from "node:crypto";
+import { codeHash, getCode, liveCodeHashes } from "./codes";
 import { db } from "./db";
 
 export const SESSION_COOKIE = "wp_session";
 
 export type User = { id: number; name: string; is_admin: number; is_guest: number };
-
-const codeHash = (code: string) => crypto.createHash("sha256").update(`wp:${code}`).digest("hex");
-
-/** Hashes of the codes currently configured; a session is only valid while the code it was made with still exists. */
-function liveCodeHashes() {
-  return new Set(
-    [process.env.ADMIN_CODE, process.env.ACCESS_CODE, process.env.GUEST_CODE].filter(Boolean).map((c) => codeHash(c!)),
-  );
-}
 
 export async function currentUser(): Promise<User | null> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
@@ -47,9 +39,9 @@ export type SignInResult = { token: string } | { error: "code" | "name" };
 export function signIn(rawName: string, code: string): SignInResult {
   const name = rawName.trim().replace(/\s+/g, " ").slice(0, 40);
   const matches = (env?: string) => !!env && safeEqual(code, env);
-  const isAdmin = matches(process.env.ADMIN_CODE);
-  const isFamily = !isAdmin && matches(process.env.ACCESS_CODE);
-  const isGuest = !isAdmin && !isFamily && matches(process.env.GUEST_CODE);
+  const isAdmin = matches(getCode("admin") ?? undefined);
+  const isFamily = !isAdmin && matches(getCode("family") ?? undefined);
+  const isGuest = !isAdmin && !isFamily && matches(getCode("guest") ?? undefined);
   if (!isAdmin && !isFamily && !isGuest) return { error: "code" };
   if (!isGuest && !name) return { error: "name" };
 
